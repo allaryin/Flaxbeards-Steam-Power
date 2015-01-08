@@ -34,6 +34,10 @@ import java.util.HashSet;
 import java.util.List;
 
 public class TileEntitySteamPipe extends SteamTransporterTileEntity implements ISteamTransporter, IWrenchable {
+	
+	// amount of steam to lose per update while leaking
+	public static int LEAK_SPEED = 100;
+	
     //protected FluidTank dummyFluidTank = FluidRegistry.isFluidRegistered("steam") ? new FluidTank(new FluidStack(FluidRegistry.getFluid("steam"), 0),10000) : null;
     public ArrayList<Integer> blacklistedSides = new ArrayList<Integer>();
     public Block disguiseBlock = null;
@@ -136,11 +140,35 @@ public class TileEntitySteamPipe extends SteamTransporterTileEntity implements I
             lastWrench = hasWrench;
         }
 
-
+        ArrayList<ForgeDirection> leakDirections = new ArrayList<ForgeDirection>();
+        
+        if (!worldObj.isRemote) {
+        	final boolean leakingChanged = testForLeaks(leakDirections);
+        	if( leakingChanged ) {
+                worldObj.markBlockForUpdate(xCoord, yCoord, zCoord);
+                markDirty();
+        	}
+        	if( isLeaking ) {
+                this.worldObj.playSoundEffect(this.xCoord + 0.5F, this.yCoord + 0.5F, this.zCoord + 0.5F, "steamcraft:leaking", 2.0F, 0.9F);
+        	}
+        } else if( this.isLeaking ) {
+        	for( ForgeDirection direction : leakDirections ) {
+            	this.worldObj.spawnParticle("smoke", xCoord + 0.5F, yCoord + 0.5F, zCoord + 0.5F, direction.offsetX * 0.1F, direction.offsetY * 0.1F, direction.offsetZ * 0.1F);
+        	}
+        }
+        
+        if( leakDirections.size() > 0 ) {
+        	this.decrSteam(LEAK_SPEED);
+        }
+    }
+    
+    protected boolean testForLeaks(ArrayList<ForgeDirection> leakDirections) {
+    	if( !worldObj.isRemote ) return false;
+    	
         ArrayList<ForgeDirection> myDirections = new ArrayList<ForgeDirection>();
         for (ForgeDirection direction : ForgeDirection.values()) {
-            if (this.doesConnect(direction) && worldObj.getTileEntity(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ) != null) {
-                TileEntity tile = worldObj.getTileEntity(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ);
+        	final TileEntity tile = worldObj.getTileEntity(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ);
+            if (tile != null && this.doesConnect(direction)) {
                 if (tile instanceof ISteamTransporter) {
                     ISteamTransporter target = (ISteamTransporter) tile;
                     if (target.doesConnect(direction.getOpposite())) {
@@ -154,45 +182,30 @@ public class TileEntitySteamPipe extends SteamTransporterTileEntity implements I
                 }
             }
         }
-        int i = 0;
+        
+        boolean changed = false;
         if (myDirections.size() > 0) {
             ForgeDirection direction = myDirections.get(0).getOpposite();
             while (!doesConnect(direction) || direction == myDirections.get(0)) {
                 direction = ForgeDirection.getOrientation((direction.ordinal() + 1) % 5);
             }
-            if (!worldObj.isRemote) {
-                if (myDirections.size() == 2 && this.getSteamShare() > 0 && i < 10 && (worldObj.isAirBlock(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ) || !worldObj.isSideSolid(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ, direction.getOpposite()))) {
-                    this.worldObj.playSoundEffect(this.xCoord + 0.5F, this.yCoord + 0.5F, this.zCoord + 0.5F, "steamcraft:leaking", 2.0F, 0.9F);
-                    if (!isLeaking) {
-                        ////Steamcraft.log.debug("Block is leaking!");
-                        isLeaking = true;
-                        worldObj.markBlockForUpdate(xCoord, yCoord, zCoord);
-                        markDirty();
-                    }
-
-                } else {
-                    if (isLeaking) {
-                        ////Steamcraft.log.debug("Block is no longer leaking!");
-                        isLeaking = false;
-                        worldObj.markBlockForUpdate(xCoord, yCoord, zCoord);
-                        markDirty();
-                    }
-                }
-                while (myDirections.size() == 2 && this.getPressure() > 0 && i < 10 && (worldObj.isAirBlock(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ) || !worldObj.isSideSolid(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ, direction.getOpposite()))) {
-                    if (worldObj.isRemote) {
-                    }
-                    this.decrSteam(10);
-
-                    i++;
-                }
-            }
-            if (worldObj.isRemote && this.isLeaking) {
-                this.worldObj.spawnParticle("smoke", xCoord + 0.5F, yCoord + 0.5F, zCoord + 0.5F, direction.offsetX * 0.1F, direction.offsetY * 0.1F, direction.offsetZ * 0.1F);
+            
+            if (myDirections.size() == 2 && this.getSteamShare() > 0 && (worldObj.isAirBlock(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ) || !worldObj.isSideSolid(xCoord + direction.offsetX, yCoord + direction.offsetY, zCoord + direction.offsetZ, direction.getOpposite()))) {
+            	if( !isLeaking ) {
+            		isLeaking = true;
+            		changed = true;
+            	}
+            	leakDirections.add(direction);
+            } else {
+              	if( isLeaking ) {
+              		isLeaking = false;
+              		changed = true;
+              	}
             }
 
         }
-
-
+        
+        return changed;
     }
 
     @Override
